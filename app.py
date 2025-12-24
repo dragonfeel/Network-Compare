@@ -869,17 +869,17 @@ def main_app():
         # Navigation
         current_view = st.query_params.get("view", "dashboard")
         
-        if st.button("Dashboard", use_container_width=True):
+        if st.button("Dashboard", key="nav_dashboard", use_container_width=True):
              st.query_params["view"] = "dashboard"
              st.rerun()
              
         if st.session_state["user_role"] == "admin":
-             if st.button("User Management", use_container_width=True):
+             if st.button("User Management", key="nav_admin", use_container_width=True):
                   st.query_params["view"] = "admin"
                   st.rerun()
         
         st.divider()
-        st.button("Logout", on_click=logout, use_container_width=True)
+        st.button("Logout", key="nav_logout", on_click=logout, use_container_width=True)
 
     # Middleware: Check Force Change
     if st.session_state.get("force_change", False):
