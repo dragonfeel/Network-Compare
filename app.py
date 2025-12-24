@@ -607,24 +607,43 @@ def show_dashboard():
                 )
 
 # --- AUTHENTICATION & USER MANAGEMENT ---
+import json
+import os
 
-def init_user_store():
-    if "users" not in st.session_state:
-        # Default admin user
-        st.session_state["users"] = {
+USERS_FILE = "users.json"
+
+def load_users():
+    if not os.path.exists(USERS_FILE):
+        return {
             "admin": {
-                "password": "password123",
+                "password": "password123", # Default
                 "role": "admin",
                 "force_change": True
             }
         }
+    try:
+        with open(USERS_FILE, "r") as f:
+            return json.load(f)
+    except:
+        return {}
+
+def save_users(users_data):
+    with open(USERS_FILE, "w") as f:
+        json.dump(users_data, f, indent=4)
+
+def init_user_store():
+    # Always load fresh from disk on init or if not in session
+    if "users" not in st.session_state:
+        st.session_state["users"] = load_users()
 
 def check_credentials():
     init_user_store()
     username = st.session_state.get("username")
     password = st.session_state.get("password")
     
-    users = st.session_state["users"]
+    # Reload to ensure we have latest data
+    users = load_users()
+    st.session_state["users"] = users 
     
     if username in users and users[username]["password"] == password:
         st.session_state["authenticated"] = True
@@ -638,28 +657,40 @@ def check_credentials():
         return False
 
 def change_password(username, new_password):
-    if username in st.session_state["users"]:
-        st.session_state["users"][username]["password"] = new_password
-        st.session_state["users"][username]["force_change"] = False
-        st.session_state["force_change"] = False # Update current session
+    users = load_users()
+    if username in users:
+        users[username]["password"] = new_password
+        users[username]["force_change"] = False
+        save_users(users)
+        
+        # Update session immediately
+        st.session_state["users"] = users
+        st.session_state["force_change"] = False 
         return True
     return False
 
 def add_user(username, password, role="user"):
-    if username in st.session_state["users"]:
+    users = load_users()
+    if username in users:
         return False
-    st.session_state["users"][username] = {
+    users[username] = {
         "password": password,
         "role": role,
-        "force_change": True # Force new users to change password
+        "force_change": True
     }
+    save_users(users)
+    st.session_state["users"] = users
     return True
 
 def delete_user(username):
     if username == "admin":
-        return False # Cannot delete main admin
-    if username in st.session_state["users"]:
-        del st.session_state["users"][username]
+        return False 
+    
+    users = load_users()
+    if username in users:
+        del users[username]
+        save_users(users)
+        st.session_state["users"] = users
         return True
     return False
 
