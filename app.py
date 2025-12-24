@@ -766,12 +766,14 @@ def show_login_page():
         st.markdown('<div class="login-title">NetCompare Login</div>', unsafe_allow_html=True)
         st.write("Please sign in to continue")
         
-        st.text_input("Username", key="username")
-        st.text_input("Password", type="password", key="password")
-        
-        if st.button("Sign In", type="primary", use_container_width=True):
-            if check_credentials():
-                st.rerun()
+        with st.form("login_form"):
+            st.text_input("Username", key="username")
+            st.text_input("Password", type="password", key="password")
+            
+            # Submit button inside the form
+            if st.form_submit_button("Sign In", type="primary", use_container_width=True):
+                if check_credentials():
+                    st.rerun()
                 
         st.markdown('</div>', unsafe_allow_html=True)
         st.caption("Default: admin / password123")
