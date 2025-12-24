@@ -609,8 +609,10 @@ def show_dashboard():
 # --- AUTHENTICATION & USER MANAGEMENT ---
 import json
 import os
+import secrets
 
-USERS_FILE = "users.json"
+# Use absolute path to ensure file is strictly local to script
+USERS_FILE = os.path.join(os.path.dirname(__file__), "users.json")
 
 def load_users():
     if not os.path.exists(USERS_FILE):
@@ -628,13 +630,42 @@ def load_users():
         return {}
 
 def save_users(users_data):
-    with open(USERS_FILE, "w") as f:
-        json.dump(users_data, f, indent=4)
+    try:
+        with open(USERS_FILE, "w") as f:
+            json.dump(users_data, f, indent=4)
+    except Exception as e:
+        print(f"Error saving users: {e}")
 
 def init_user_store():
-    # Always load fresh from disk on init or if not in session
+    # Ensure file exists physically on disk
+    if not os.path.exists(USERS_FILE):
+        defaults = load_users()
+        save_users(defaults)
+
+    # Load into session
     if "users" not in st.session_state:
         st.session_state["users"] = load_users()
+
+def try_token_auth():
+    """Checks URL query params for a valid session token."""
+    params = st.query_params
+    token = params.get("session")
+    
+    if not token:
+        return False
+        
+    users = load_users()
+    for username, data in users.items():
+        if data.get("session_token") == token:
+            # Valid token found
+            st.session_state["authenticated"] = True
+            st.session_state["current_user"] = username
+            st.session_state["user_role"] = data["role"]
+            st.session_state["force_change"] = data.get("force_change", False)
+            st.session_state["users"] = users # Sync session
+            return True
+            
+    return False
 
 def check_credentials():
     init_user_store()
@@ -650,6 +681,15 @@ def check_credentials():
         st.session_state["current_user"] = username
         st.session_state["user_role"] = users[username]["role"]
         st.session_state["force_change"] = users[username].get("force_change", False)
+        
+        # Generate Session Token
+        token = secrets.token_urlsafe(32)
+        users[username]["session_token"] = token
+        save_users(users)
+        
+        # Set URL param
+        st.query_params["session"] = token
+        
         return True
     else:
         st.session_state["authenticated"] = False
@@ -693,6 +733,189 @@ def delete_user(username):
         st.session_state["users"] = users
         return True
     return False
+
+# --- VIEWS: AUTH ---
+
+def show_login_page():
+    # Login Page styling
+    st.markdown("""
+    <style>
+        .login-container {
+            max-width: 400px;
+            margin: 100px auto;
+            padding: 2rem;
+            background: linear-gradient(145deg, #1e293b 0%, #0f172a 100%);
+            border: 1px solid #334155;
+            border-radius: 16px;
+            box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.5);
+            text-align: center;
+        }
+        .login-title {
+            color: white;
+            font-size: 1.5rem;
+            font-weight: 700;
+            margin-bottom: 1.5rem;
+        }
+    </style>
+    """, unsafe_allow_html=True)
+
+    col1, col2, col3 = st.columns([1, 1, 1])
+    
+    with col2:
+        st.markdown('<div class="login-container">', unsafe_allow_html=True)
+        st.markdown('<div class="login-title">NetCompare Login</div>', unsafe_allow_html=True)
+        st.write("Please sign in to continue")
+        
+        st.text_input("Username", key="username")
+        st.text_input("Password", type="password", key="password")
+        
+        if st.button("Sign In", type="primary", use_container_width=True):
+            if check_credentials():
+                st.rerun()
+                
+        st.markdown('</div>', unsafe_allow_html=True)
+        st.caption("Default: admin / password123")
+
+def show_change_password_page():
+    st.title("Change Password")
+    st.warning("You must change your password to continue.")
+    
+    with st.form("change_pass_form"):
+        new_pass = st.text_input("New Password", type="password")
+        confirm_pass = st.text_input("Confirm Password", type="password")
+        
+        if st.form_submit_button("Update Password"):
+            if new_pass != confirm_pass:
+                st.error("Passwords do not match.")
+            elif len(new_pass) < 4:
+                st.error("Password is too short.")
+            else:
+                user = st.session_state["current_user"]
+                change_password(user, new_pass)
+                st.success("Password updated! Redirecting...")
+                st.rerun()
+
+def show_admin_page():
+    st.title("Admin: User Management")
+    st.write("Manage users and their access.")
+    st.divider()
+    
+    # 1. List Users
+    st.subheader("Current Users")
+    users = st.session_state["users"]
+    
+    # Simple table display
+    user_data = []
+    for u, data in users.items():
+        user_data.append({
+            "Username": u,
+            "Role": data["role"],
+            "Need Password Change": "Yes" if data.get("force_change") else "No"
+        })
+    st.table(user_data)
+    
+    st.divider()
+    
+    c1, c2 = st.columns(2)
+    
+    with c1:
+        st.subheader("Add New User")
+        with st.form("add_user_form"):
+            new_u = st.text_input("Username")
+            new_p = st.text_input("Temporary Password", type="password")
+            role = st.selectbox("Role", ["user", "admin"])
+            
+            if st.form_submit_button("Create User"):
+                if add_user(new_u, new_p, role):
+                    st.success(f"User {new_u} created.")
+                    st.rerun()
+                else:
+                    st.error("User already exists.")
+                    
+    with c2:
+        st.subheader("Delete User")
+        with st.form("del_user_form"):
+            del_u = st.selectbox("Select User", [u for u in users.keys() if u != "admin"])
+            
+            if st.form_submit_button("Delete"):
+                if delete_user(del_u):
+                    st.success(f"User {del_u} deleted.")
+                    st.rerun()
+                else:
+                    st.error("Failed to delete user.")
+
+
+def logout():
+    # Clear token from User Store
+    if "current_user" in st.session_state:
+        username = st.session_state["current_user"]
+        users = load_users()
+        if username in users:
+            users[username]["session_token"] = None
+            save_users(users)
+            
+    st.session_state["authenticated"] = False
+    st.session_state["current_user"] = None
+    st.query_params.clear() # Remove session param
+    st.rerun()
+
+# --- MAIN APP ROUTER ---
+def main_app():
+    # Show logout in sidebar
+    with st.sidebar:
+        st.write(f"Logged in as: **{st.session_state['current_user']}**")
+        st.divider()
+        
+        # Navigation
+        current_view = st.query_params.get("view", "dashboard")
+        
+        if st.button("Dashboard", use_container_width=True):
+             st.query_params["view"] = "dashboard"
+             st.rerun()
+             
+        if st.session_state["user_role"] == "admin":
+             if st.button("User Management", use_container_width=True):
+                  st.query_params["view"] = "admin"
+                  st.rerun()
+        
+        st.divider()
+        st.button("Logout", on_click=logout, use_container_width=True)
+
+    # Middleware: Check Force Change
+    if st.session_state.get("force_change", False):
+        show_change_password_page()
+        return
+
+    # Router Logic
+    view = st.query_params.get("view", "dashboard")
+
+    if view == "compare":
+        show_comparison()
+    elif view == "details":
+        pid = st.query_params.get("product_id")
+        show_details(pid)
+    elif view == "admin":
+        if st.session_state["user_role"] == "admin":
+            show_admin_page()
+        else:
+            st.error("Access Denied")
+    else:
+        show_dashboard()
+
+if __name__ == "__main__":
+    init_user_store()
+    
+    if "authenticated" not in st.session_state:
+        st.session_state["authenticated"] = False
+
+    # Try Token Auth if not authenticated
+    if not st.session_state["authenticated"]:
+        try_token_auth()
+
+    if st.session_state["authenticated"]:
+        main_app()
+    else:
+        show_login_page()
 
 # --- VIEWS: AUTH ---
 
